@@ -34,9 +34,9 @@ func (t *TUIApp) showInputDialogWithID(pageID string, title, defaultValue string
 		SetText(defaultValue).
 		SetFieldWidth(35).
 		SetFieldBackgroundColor(ColorBgSelect).
-		SetFieldTextColor(tcell.NewRGBColor(0, 0, 0)).  // 黑色文字，确保在明亮背景上清晰可见
+		SetFieldTextColor(tcell.NewRGBColor(0, 0, 0)). // 黑色文字，确保在明亮背景上清晰可见
 		SetPlaceholder("请输入...").
-		SetPlaceholderTextColor(tcell.NewRGBColor(60, 60, 60)).  // 深灰色占位符
+		SetPlaceholderTextColor(tcell.NewRGBColor(60, 60, 60)). // 深灰色占位符
 		SetLabelColor(ColorNeonCyan)
 
 	container := tview.NewFlex().SetDirection(tview.FlexRow)
@@ -126,7 +126,7 @@ func (t *TUIApp) showConfirmDialogWithID(pageID string, message string, callback
 			t.hideModalPage(pageID)
 			t.app.SetFocus(previousFocus)
 			t.app.ForceDraw()
-			callback(buttonIndex == 0)
+			callback(buttonIndex == 1)
 		})
 
 	modal.SetTitle(t.formatPanelTitle("⚠", "确认"))
