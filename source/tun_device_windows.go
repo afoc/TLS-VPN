@@ -6,7 +6,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os/exec"
 	"strings"
 
 	"golang.org/x/sys/windows"
@@ -204,51 +203,4 @@ func cidrToNetmask(cidr string) string {
 		byte(mask>>16),
 		byte(mask>>8),
 		byte(mask))
-}
-
-// getInterfaceIndex 获取网络接口索引
-func getInterfaceIndex(ifaceName string) (int, error) {
-	// 使用 netsh 命令获取接口信息
-	output, err := exec.Command("netsh", "interface", "ipv4", "show", "interfaces").Output()
-	if err != nil {
-		return 0, fmt.Errorf("获取接口列表失败: %v", err)
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, ifaceName) {
-			// 解析接口索引
-			fields := strings.Fields(line)
-			if len(fields) >= 1 {
-				var idx int
-				if _, err := fmt.Sscanf(fields[0], "%d", &idx); err == nil {
-					return idx, nil
-				}
-			}
-		}
-	}
-
-	return 0, fmt.Errorf("未找到接口: %s", ifaceName)
-}
-
-// getDefaultInterface 获取默认网络接口名称
-func getDefaultInterface() (string, error) {
-	// 使用 route print 获取默认路由接口
-	output, err := exec.Command("route", "print", "0.0.0.0").Output()
-	if err != nil {
-		return "", fmt.Errorf("获取默认接口失败: %v", err)
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "0.0.0.0") {
-			fields := strings.Fields(line)
-			// route print 输出格式：网络 子网掩码 网关 接口 跃点
-			if len(fields) >= 4 {
-				return fields[3], nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("未找到默认接口")
 }

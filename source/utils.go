@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"time"
 )
 
 // ================ 命令执行辅助 ================
@@ -23,22 +22,7 @@ func runCmdCombined(name string, args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// containsString 检查字符串是否包含子串
-func containsString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
-}
+
 
 // ================ 格式化工具 ================
 
@@ -62,13 +46,4 @@ func formatBytes(bytes uint64) string {
 	}
 }
 
-// formatDuration 格式化时间
-func formatDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%d秒", int(d.Seconds()))
-	} else if d < time.Hour {
-		return fmt.Sprintf("%d分%d秒", int(d.Minutes()), int(d.Seconds())%60)
-	} else {
-		return fmt.Sprintf("%d时%d分", int(d.Hours()), int(d.Minutes())%60)
-	}
-}
+

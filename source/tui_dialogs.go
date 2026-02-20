@@ -29,6 +29,9 @@ func (t *TUIApp) showInputDialogWithID(pageID string, title, defaultValue string
 	previousFocus := t.menuList
 	accent := ColorTag(ColorAccent)
 	alt := ColorTag(ColorAccentAlt)
+	panelSpacer := func(width int) tview.Primitive {
+		return tview.NewBox().SetBackgroundColor(ColorBgPanel)
+	}
 
 	inputField := tview.NewInputField().
 		SetText(defaultValue).
@@ -49,9 +52,10 @@ func (t *TUIApp) showInputDialogWithID(pageID string, title, defaultValue string
 	titleText.SetTextColor(ColorAccent)
 
 	inputRow := tview.NewFlex().
-		AddItem(nil, 2, 0, false).
+		AddItem(panelSpacer(2), 2, 0, false).
 		AddItem(inputField, 0, 1, true).
-		AddItem(nil, 2, 0, false)
+		AddItem(panelSpacer(2), 2, 0, false)
+	inputRow.SetBackgroundColor(ColorBgPanel)
 
 	hintText := tview.NewTextView().
 		SetDynamicColors(true).
@@ -62,9 +66,9 @@ func (t *TUIApp) showInputDialogWithID(pageID string, title, defaultValue string
 
 	container.
 		AddItem(titleText, 1, 0, false).
-		AddItem(nil, 1, 0, false).
+		AddItem(panelSpacer(0), 1, 0, false).
 		AddItem(inputRow, 1, 0, true).
-		AddItem(nil, 1, 0, false).
+		AddItem(panelSpacer(0), 1, 0, false).
 		AddItem(hintText, 1, 0, false)
 
 	container.SetBorder(true).
@@ -242,43 +246,4 @@ func (t *TUIApp) showInfoDialog(title, content string) {
 
 	t.showModalPage("info", modal)
 	t.app.SetFocus(textView)
-}
-
-// showLoadingDialog 显示加载动画对话框
-func (t *TUIApp) showLoadingDialog(message string) *Spinner {
-	spinner := NewSpinner(t.app)
-	spinner.SetText(ColorTag(ColorAccent)+message+resetTag, "")
-
-	container := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(nil, 0, 1, false).
-		AddItem(spinner.GetView(), 1, 0, false).
-		AddItem(nil, 0, 1, false)
-
-	container.SetBorder(true).
-		SetBorderColor(ColorBorderActive).
-		SetTitle(t.formatPanelTitle("⏳", "处理中")).
-		SetBackgroundColor(ColorBgPanel).
-		SetBorderPadding(1, 1, 2, 2)
-
-	modal := tview.NewFlex().
-		AddItem(nil, 0, 1, false).
-		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(nil, 0, 1, false).
-			AddItem(container, 5, 0, false).
-			AddItem(nil, 0, 1, false), 40, 0, false).
-		AddItem(nil, 0, 1, false)
-
-	t.showModalPage("loading", modal)
-	spinner.Start()
-
-	return spinner
-}
-
-// hideLoadingDialog 隐藏加载动画对话框
-func (t *TUIApp) hideLoadingDialog(spinner *Spinner) {
-	if spinner != nil {
-		spinner.Stop()
-	}
-	t.hideModalPage("loading")
-	t.app.SetFocus(t.menuList)
 }

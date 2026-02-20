@@ -23,6 +23,7 @@ type Message struct {
 	Sequence uint32 // 新增：消息序列号
 	Checksum uint32 // 新增：CRC32校验和（可选，0表示不校验）
 	Payload  []byte
+	
 }
 
 // Serialize 序列化消息

@@ -1,5 +1,5 @@
 {
-  "server_address": "1224124",
+  "server_address": "sdadsa",
   "server_port": 8080,
   "client_address": "10.8.0.2/24",
   "network": "10.8.0.0/24",
@@ -20,7 +20,7 @@
   "route_mode": "full",
   "exclude_routes": [],
   "redirect_gateway": true,
-  "redirect_dns": true,
+  "redirect_dns": false,
   "enable_nat": true,
   "nat_interface": ""
 }

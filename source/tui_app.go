@@ -315,13 +315,6 @@ func (t *TUIApp) formatMenuDesc(desc string, hasChild bool) string {
 	return desc
 }
 
-func splitIconLabel(label string) (string, string) {
-	parts := strings.SplitN(label, " ", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return label, ""
-}
 
 func stringWidth(s string) int {
 	return len([]rune(s))
@@ -502,23 +495,6 @@ func (t *TUIApp) updateFocusStyles() {
 	}
 }
 
-func (t *TUIApp) startBorderPulse() {
-	go func() {
-		ticker := time.NewTicker(600 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-t.stopChan:
-				return
-			case <-ticker.C:
-				t.borderPulseOn = !t.borderPulseOn
-				t.app.QueueUpdateDraw(func() {
-					t.updateFocusStyles()
-				})
-			}
-		}
-	}()
-}
 
 func (t *TUIApp) showSplashScreen() {
 	spinner := NewSpinner(t.app).SetFrames(SpinnerFramesBlock)

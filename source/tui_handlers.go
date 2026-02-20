@@ -514,9 +514,10 @@ func handleShowTokenList(t *TUIApp) {
 
 	for i, tk := range tokens {
 		status := "[green]有效"
-		if tk.Status == "used" {
+		switch tk.Status {
+		case "used":
 			status = "[gray]已使用"
-		} else if tk.Status == "expired" {
+		case "expired":
 			status = "[red]已过期"
 		}
 
