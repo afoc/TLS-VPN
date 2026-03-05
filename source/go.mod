@@ -1,4 +1,4 @@
-module github.com/afoc/tls-vpn
+module afoc/tls-vpn
 
 go 1.24.0
 

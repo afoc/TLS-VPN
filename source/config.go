@@ -114,7 +114,7 @@ var DefaultConfig = VPNConfig{
 	ServerIP:               "10.8.0.1/24",
 	ClientIPStart:          2,
 	ClientIPEnd:            254,
-	DNSServers:             []string{"8.8.8.8", "8.8.4.4"},
+	DNSServers:             []string{"1.1.1.1", "8.8.8.8"},
 	PushRoutes:             []string{},
 	RouteMode:              "split",
 	ExcludeRoutes:          []string{},

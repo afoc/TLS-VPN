@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 )
 
 // MessageType 消息类型枚举
@@ -18,48 +19,72 @@ const (
 
 // Message VPN消息结构
 type Message struct {
-	Type     MessageType
-	Length   uint32
-	Sequence uint32 // 新增：消息序列号
-	Checksum uint32 // 新增：CRC32校验和（可选，0表示不校验）
-	Payload  []byte
-	
+	Type    MessageType
+	Length  uint32
+	Payload []byte
 }
+
+const (
+	SimpleHeaderSize = 5
+	MaxMessageLength = 65535
+)
 
 // Serialize 序列化消息
 func (m *Message) Serialize() ([]byte, error) {
-	// 新格式: Type(1) + Length(4) + Sequence(4) + Checksum(4) + Payload
-	header := make([]byte, 13)
+	if m.Length != uint32(len(m.Payload)) {
+		m.Length = uint32(len(m.Payload))
+	}
+
+	header := make([]byte, SimpleHeaderSize)
 	header[0] = byte(m.Type)
 	binary.BigEndian.PutUint32(header[1:5], m.Length)
-	binary.BigEndian.PutUint32(header[5:9], m.Sequence)
-	binary.BigEndian.PutUint32(header[9:13], m.Checksum)
-
 	return append(header, m.Payload...), nil
 }
 
 // Deserialize 反序列化消息
 func Deserialize(data []byte) (*Message, error) {
-	if len(data) < 13 {
+	if len(data) < SimpleHeaderSize {
 		return nil, fmt.Errorf("消息长度不足")
 	}
 
 	msgType := MessageType(data[0])
 	length := binary.BigEndian.Uint32(data[1:5])
-	sequence := binary.BigEndian.Uint32(data[5:9])
-	checksum := binary.BigEndian.Uint32(data[9:13])
 
-	if uint32(len(data)) < 13+length {
+	if uint32(len(data)) < SimpleHeaderSize+length {
 		return nil, fmt.Errorf("消息长度不匹配")
 	}
 
-	payload := data[13 : 13+length]
+	payload := data[SimpleHeaderSize : SimpleHeaderSize+length]
 	return &Message{
-		Type:     msgType,
-		Length:   length,
-		Sequence: sequence,
-		Checksum: checksum,
-		Payload:  payload,
+		Type:    msgType,
+		Length:  length,
+		Payload: payload,
+	}, nil
+}
+
+func ReadMessage(reader io.Reader) (*Message, error) {
+	baseHeader := make([]byte, SimpleHeaderSize)
+	if _, err := io.ReadFull(reader, baseHeader); err != nil {
+		return nil, err
+	}
+
+	msgType := MessageType(baseHeader[0])
+	length := binary.BigEndian.Uint32(baseHeader[1:5])
+	if length > MaxMessageLength {
+		return nil, fmt.Errorf("消息过大: %d", length)
+	}
+
+	payload := make([]byte, length)
+	if length > 0 {
+		if _, err := io.ReadFull(reader, payload); err != nil {
+			return nil, err
+		}
+	}
+
+	return &Message{
+		Type:    msgType,
+		Length:  length,
+		Payload: payload,
 	}, nil
 }
 

@@ -89,7 +89,7 @@ var themes = map[string]Theme{
 		BgDeep:     tcell.NewRGBColor(13, 2, 33),
 		BgMain:     tcell.NewRGBColor(20, 10, 45),
 		BgPanel:    tcell.NewRGBColor(30, 15, 60),
-		BgSelect:   tcell.NewRGBColor(0, 180, 200),  // #00B4C8 明亮的青色选中背景（高对比度，黑色文字清晰可见）
+		BgSelect:   tcell.NewRGBColor(0, 180, 200), // #00B4C8 明亮的青色选中背景（高对比度，黑色文字清晰可见）
 		NeonPink:   tcell.NewRGBColor(255, 0, 255),
 		NeonCyan:   tcell.NewRGBColor(0, 255, 255),
 		NeonGreen:  tcell.NewRGBColor(57, 255, 20),
@@ -105,7 +105,7 @@ var themes = map[string]Theme{
 		BgDeep:     tcell.NewRGBColor(6, 18, 10),
 		BgMain:     tcell.NewRGBColor(10, 28, 16),
 		BgPanel:    tcell.NewRGBColor(14, 40, 22),
-		BgSelect:   tcell.NewRGBColor(57, 255, 20),  // #39FF14 荧光绿选中背景（高对比度，黑色文字清晰可见）
+		BgSelect:   tcell.NewRGBColor(57, 255, 20), // #39FF14 荧光绿选中背景（高对比度，黑色文字清晰可见）
 		NeonPink:   tcell.NewRGBColor(120, 255, 120),
 		NeonCyan:   tcell.NewRGBColor(90, 255, 160),
 		NeonGreen:  tcell.NewRGBColor(57, 255, 20),
@@ -121,7 +121,7 @@ var themes = map[string]Theme{
 		BgDeep:     tcell.NewRGBColor(6, 10, 30),
 		BgMain:     tcell.NewRGBColor(10, 18, 45),
 		BgPanel:    tcell.NewRGBColor(12, 28, 70),
-		BgSelect:   tcell.NewRGBColor(80, 220, 255),  // #50DCFF 明亮的天蓝色选中背景（高对比度，黑色文字清晰可见）
+		BgSelect:   tcell.NewRGBColor(80, 220, 255), // #50DCFF 明亮的天蓝色选中背景（高对比度，黑色文字清晰可见）
 		NeonPink:   tcell.NewRGBColor(255, 120, 200),
 		NeonCyan:   tcell.NewRGBColor(80, 220, 255),
 		NeonGreen:  tcell.NewRGBColor(80, 255, 200),

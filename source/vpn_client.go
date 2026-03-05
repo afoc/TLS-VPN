@@ -1,14 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"hash/crc32"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -28,9 +26,7 @@ type VPNClient struct {
 	cancel        context.CancelFunc // 主 context 取消函数
 	cancelMutex   sync.Mutex
 	tunDevice     TUNDevice // 统一的TUN设备接口
-	sendSeq       uint32        // 发送序列号
-	recvSeq       uint32        // 接收序列号
-	seqMutex      sync.Mutex    // 序列号锁
+	reader        *bufio.Reader
 	routeManager  *RouteManager // 路由管理器
 	retryCount    int           // 重连计数器
 }
@@ -118,55 +114,32 @@ func (c *VPNClient) Connect(ctx context.Context) error {
 
 	c.connMutex.Lock()
 	c.conn = conn
+	c.reader = bufio.NewReader(conn)
 	c.connMutex.Unlock()
 	log.Println("成功连接到VPN服务器，使用TLS 1.3协议")
 
-	// 读取分配的IP - 读取新的消息头格式（13字节）
-	header := make([]byte, 13)
-	_, err = io.ReadFull(c.conn, header)
+	msg, err := ReadMessage(c.reader)
 	if err != nil {
-		return fmt.Errorf("读取消息头失败: %v", err)
+		return fmt.Errorf("读取IP分配消息失败: %v", err)
 	}
 
-	// 手动解析消息头
-	msgType := MessageType(header[0])
-	length := binary.BigEndian.Uint32(header[1:5])
-
-	// 读取消息体
-	payload := make([]byte, length)
-	_, err = io.ReadFull(c.conn, payload)
-	if err != nil {
-		return fmt.Errorf("读取消息体失败: %v", err)
-	}
-
-	if msgType == MessageTypeIPAssignment && len(payload) >= 4 {
-		c.assignedIP = net.IP(payload)
+	if msg.Type == MessageTypeIPAssignment && len(msg.Payload) >= 4 {
+		c.assignedIP = net.IP(msg.Payload)
 		log.Printf("分配的VPN IP: %s", c.assignedIP)
 	} else {
-		return fmt.Errorf("未收到有效的IP分配信息: type=%d, length=%d", msgType, length)
+		return fmt.Errorf("未收到有效的IP分配信息: type=%d, length=%d", msg.Type, msg.Length)
 	}
 
 	// 接收服务器推送的配置
-	header = make([]byte, 13)
-	_, err = io.ReadFull(c.conn, header)
+	msg, err = ReadMessage(c.reader)
 	if err != nil {
 		log.Printf("警告：未接收到服务器配置: %v", err)
 		return nil // 配置是可选的，不影响连接
 	}
 
-	msgType = MessageType(header[0])
-	length = binary.BigEndian.Uint32(header[1:5])
-
-	if msgType == MessageTypeControl && length > 0 {
-		payload = make([]byte, length)
-		_, err = io.ReadFull(c.conn, payload)
-		if err != nil {
-			log.Printf("警告：读取服务器配置失败: %v", err)
-			return nil
-		}
-
+	if msg.Type == MessageTypeControl && msg.Length > 0 {
 		var serverConfig ClientConfig
-		if err := json.Unmarshal(payload, &serverConfig); err != nil {
+		if err := json.Unmarshal(msg.Payload, &serverConfig); err != nil {
 			log.Printf("警告：解析服务器配置失败: %v", err)
 		} else {
 			// 应用服务器推送的路由配置
@@ -207,24 +180,10 @@ func (c *VPNClient) SendData(data []byte) error {
 		return fmt.Errorf("连接未建立")
 	}
 
-	// 获取并递增发送序列号
-	c.seqMutex.Lock()
-	seq := c.sendSeq
-	c.sendSeq++
-	c.seqMutex.Unlock()
-
-	// 计算校验和（可选）
-	checksum := uint32(0)
-	if len(data) > 0 {
-		checksum = crc32.ChecksumIEEE(data)
-	}
-
 	msg := &Message{
-		Type:     MessageTypeData,
-		Length:   uint32(len(data)),
-		Sequence: seq,
-		Checksum: checksum,
-		Payload:  data,
+		Type:    MessageTypeData,
+		Length:  uint32(len(data)),
+		Payload: data,
 	}
 
 	serialized, err := msg.Serialize()
@@ -247,11 +206,9 @@ func (c *VPNClient) SendHeartbeat() error {
 	}
 
 	msg := &Message{
-		Type:     MessageTypeHeartbeat,
-		Length:   0,
-		Sequence: 0, // 心跳不使用序列号
-		Checksum: 0,
-		Payload:  []byte{},
+		Type:    MessageTypeHeartbeat,
+		Length:  0,
+		Payload: []byte{},
 	}
 
 	serialized, err := msg.Serialize()
@@ -266,60 +223,19 @@ func (c *VPNClient) SendHeartbeat() error {
 // ReceiveData 接收数据，返回消息类型和数据
 func (c *VPNClient) ReceiveData() (MessageType, []byte, error) {
 	c.connMutex.Lock()
-	conn := c.conn
+	reader := c.reader
 	c.connMutex.Unlock()
 
-	if conn == nil {
+	if reader == nil {
 		return 0, nil, fmt.Errorf("连接未建立")
 	}
 
-	// 读取消息头（13字节）
-	header := make([]byte, 13)
-	_, err := io.ReadFull(conn, header)
+	msg, err := ReadMessage(reader)
 	if err != nil {
 		return 0, nil, err
 	}
 
-	// 手动解析消息头
-	msgType := MessageType(header[0])
-	length := binary.BigEndian.Uint32(header[1:5])
-	sequence := binary.BigEndian.Uint32(header[5:9])
-	checksum := binary.BigEndian.Uint32(header[9:13])
-
-	// 读取消息体
-	payload := make([]byte, length)
-	if length > 0 {
-		_, err = io.ReadFull(conn, payload)
-		if err != nil {
-			return 0, nil, err
-		}
-	}
-
-	// 验证序列号（心跳和IP分配消息除外）
-	if msgType != MessageTypeHeartbeat && msgType != MessageTypeIPAssignment {
-		c.seqMutex.Lock()
-		// 检测重放攻击（序列号回退）
-		if sequence < c.recvSeq {
-			c.seqMutex.Unlock()
-			return 0, nil, fmt.Errorf("检测到重放攻击：期望序列号 >= %d，收到 %d", c.recvSeq, sequence)
-		}
-		// 检测消息丢失（序列号跳跃）
-		if sequence > c.recvSeq+1 && c.recvSeq > 0 {
-			log.Printf("警告：检测到消息丢失，期望序列号 %d，收到 %d", c.recvSeq+1, sequence)
-		}
-		c.recvSeq = sequence
-		c.seqMutex.Unlock()
-	}
-
-	// 验证校验和（如果提供）
-	if checksum != 0 && len(payload) > 0 {
-		actualChecksum := crc32.ChecksumIEEE(payload)
-		if actualChecksum != checksum {
-			return 0, nil, fmt.Errorf("消息校验和不匹配: 期望 %d, 收到 %d", actualChecksum, checksum)
-		}
-	}
-
-	return msgType, payload, nil
+	return msg.Type, msg.Payload, nil
 }
 
 // Run 运行客户端（接受 context 控制生命周期）
@@ -701,6 +617,7 @@ func (c *VPNClient) closeConnection() {
 		_ = c.conn.Close()
 		c.conn = nil
 	}
+	c.reader = nil
 	c.connMutex.Unlock()
 }
 

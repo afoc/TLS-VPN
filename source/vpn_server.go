@@ -1,12 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"log"
 	mathrand "math/rand"
@@ -27,9 +26,7 @@ type VPNSession struct {
 	CertSubject  string // 证书主题，用于绑定IP
 	closed       bool   // 标记会话是否已关闭
 	mutex        sync.RWMutex
-	sendSeq      uint32     // 新增：发送序列号
-	recvSeq      uint32     // 新增：接收序列号
-	seqMutex     sync.Mutex // 新增：序列号锁
+	reader       *bufio.Reader
 	// 流量统计
 	BytesSent     uint64    // 发送字节数
 	BytesReceived uint64    // 接收字节数
@@ -289,8 +286,7 @@ func (s *VPNServer) handleConnection(ctx context.Context, conn net.Conn) {
 		LastActivity:  time.Now(),
 		IP:            clientIP,
 		CertSubject:   certSubject,
-		sendSeq:       0,
-		recvSeq:       0,
+		reader:        bufio.NewReader(tlsConn),
 		BytesSent:     0,
 		BytesReceived: 0,
 		ConnectedAt:   time.Now(),
@@ -302,11 +298,9 @@ func (s *VPNServer) handleConnection(ctx context.Context, conn net.Conn) {
 
 	// 发送IP分配信息
 	ipMsg := &Message{
-		Type:     MessageTypeIPAssignment,
-		Length:   uint32(len(clientIP)),
-		Sequence: 0,
-		Checksum: 0,
-		Payload:  clientIP,
+		Type:    MessageTypeIPAssignment,
+		Length:  uint32(len(clientIP)),
+		Payload: clientIP,
 	}
 	ipData, err := ipMsg.Serialize()
 	if err != nil {
@@ -352,9 +346,7 @@ sessionLoop:
 
 		session.TLSConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-		// 读取消息头（13字节：类型+长度+序列号+校验和）
-		header := make([]byte, 13)
-		_, err := io.ReadFull(session.TLSConn, header)
+		msg, err := ReadMessage(session.reader)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				// 检查是否超时
@@ -370,61 +362,10 @@ sessionLoop:
 			break
 		}
 
-		// 解析消息头
-		msgType := MessageType(header[0])
-		length := binary.BigEndian.Uint32(header[1:5])
-		sequence := binary.BigEndian.Uint32(header[5:9])
-		checksum := binary.BigEndian.Uint32(header[9:13])
-
-		// 防止过大的消息
-		if length > 65535 {
-			log.Printf("会话 %s 消息过大: %d 字节", session.ID, length)
-			break
-		}
-
-		// 读取消息体
-		payload := make([]byte, length)
-		if length > 0 {
-			_, err = io.ReadFull(session.TLSConn, payload)
-			if err != nil {
-				log.Printf("会话 %s 读取消息体失败: %v", session.ID, err)
-				break
-			}
-		}
-
-		// 验证序列号（心跳消息除外）
-		if msgType != MessageTypeHeartbeat && msgType != MessageTypeIPAssignment {
-			session.seqMutex.Lock()
-			// 检测重放攻击（序列号回退）
-			if sequence < session.recvSeq {
-				session.seqMutex.Unlock()
-				log.Printf("会话 %s 检测到重放攻击：期望序列号 >= %d，收到 %d",
-					session.ID, session.recvSeq, sequence)
-				break
-			}
-			// 检测消息丢失（序列号跳跃）
-			if sequence > session.recvSeq+1 && session.recvSeq > 0 {
-				log.Printf("警告：会话 %s 检测到消息丢失，期望序列号 %d，收到 %d",
-					session.ID, session.recvSeq+1, sequence)
-			}
-			session.recvSeq = sequence
-			session.seqMutex.Unlock()
-		}
-
-		// 验证校验和（如果提供）
-		if checksum != 0 && len(payload) > 0 {
-			actualChecksum := crc32.ChecksumIEEE(payload)
-			if actualChecksum != checksum {
-				log.Printf("会话 %s 消息校验和不匹配: 期望 %d, 收到 %d",
-					session.ID, actualChecksum, checksum)
-				break
-			}
-		}
-
 		session.UpdateActivity()
 
 		// 处理不同类型的消息
-		switch msgType {
+		switch msg.Type {
 		case MessageTypeHeartbeat:
 			// 响应心跳
 			if err := s.sendHeartbeatResponse(session); err != nil {
@@ -433,19 +374,19 @@ sessionLoop:
 			}
 		case MessageTypeData:
 			// 统计接收流量
-			session.AddBytesReceived(uint64(len(payload)))
+			session.AddBytesReceived(uint64(len(msg.Payload)))
 
 			// 处理数据包 - 直接写入TUN设备（Windows Wintun和Unix/Linux TUN都是Layer 3）
-			if s.tunDevice != nil && len(payload) > 0 {
-				_, err := s.tunDevice.Write(payload)
+			if s.tunDevice != nil && len(msg.Payload) > 0 {
+				_, err := s.tunDevice.Write(msg.Payload)
 				if err != nil {
 					log.Printf("会话 %s 写入TUN设备失败: %v", session.ID, err)
 				}
 			} else {
-				log.Printf("从会话 %s 接收到数据包，长度: %d", session.ID, len(payload))
+				log.Printf("从会话 %s 接收到数据包，长度: %d", session.ID, len(msg.Payload))
 			}
 		default:
-			log.Printf("会话 %s 收到未知消息类型: %d", session.ID, msgType)
+			log.Printf("会话 %s 收到未知消息类型: %d", session.ID, msg.Type)
 		}
 	}
 
@@ -455,11 +396,9 @@ sessionLoop:
 // sendHeartbeatResponse 发送心跳响应
 func (s *VPNServer) sendHeartbeatResponse(session *VPNSession) error {
 	response := &Message{
-		Type:     MessageTypeHeartbeat,
-		Length:   0,
-		Sequence: 0, // 心跳不使用序列号
-		Checksum: 0,
-		Payload:  []byte{},
+		Type:    MessageTypeHeartbeat,
+		Length:  0,
+		Payload: []byte{},
 	}
 	responseData, err := response.Serialize()
 	if err != nil {
@@ -471,24 +410,10 @@ func (s *VPNServer) sendHeartbeatResponse(session *VPNSession) error {
 
 // sendDataResponse 发送数据响应
 func (s *VPNServer) sendDataResponse(session *VPNSession, payload []byte) error {
-	// 获取并递增发送序列号
-	session.seqMutex.Lock()
-	seq := session.sendSeq
-	session.sendSeq++
-	session.seqMutex.Unlock()
-
-	// 计算校验和（可选）
-	checksum := uint32(0)
-	if len(payload) > 0 {
-		checksum = crc32.ChecksumIEEE(payload)
-	}
-
 	response := &Message{
-		Type:     MessageTypeData,
-		Length:   uint32(len(payload)),
-		Sequence: seq,
-		Checksum: checksum,
-		Payload:  payload,
+		Type:    MessageTypeData,
+		Length:  uint32(len(payload)),
+		Payload: payload,
 	}
 	responseData, err := response.Serialize()
 	if err != nil {
@@ -523,19 +448,11 @@ func (s *VPNServer) pushConfigToClient(session *VPNSession) error {
 		return fmt.Errorf("序列化客户端配置失败: %v", err)
 	}
 
-	// 获取并递增发送序列号
-	session.seqMutex.Lock()
-	seq := session.sendSeq
-	session.sendSeq++
-	session.seqMutex.Unlock()
-
 	// 发送控制消息
 	msg := &Message{
-		Type:     MessageTypeControl,
-		Length:   uint32(len(data)),
-		Sequence: seq,
-		Checksum: crc32.ChecksumIEEE(data),
-		Payload:  data,
+		Type:    MessageTypeControl,
+		Length:  uint32(len(data)),
+		Payload: data,
 	}
 
 	msgData, err := msg.Serialize()

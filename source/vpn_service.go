@@ -641,6 +641,7 @@ func (s *VPNService) UpdateConfig(field string, value interface{}) error {
 	case "enable_nat":
 		if v, ok := value.(bool); ok {
 			s.config.EnableNAT = v
+			s.config.RedirectDNS = v // 启用NAT时默认重定向DNS
 		}
 	case "redirect_gateway":
 		if v, ok := value.(bool); ok {

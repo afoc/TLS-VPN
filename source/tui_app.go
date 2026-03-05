@@ -315,7 +315,6 @@ func (t *TUIApp) formatMenuDesc(desc string, hasChild bool) string {
 	return desc
 }
 
-
 func stringWidth(s string) int {
 	return len([]rune(s))
 }
@@ -494,7 +493,6 @@ func (t *TUIApp) updateFocusStyles() {
 		t.logView.SetBorderColor(ColorBorderActive)
 	}
 }
-
 
 func (t *TUIApp) showSplashScreen() {
 	spinner := NewSpinner(t.app).SetFrames(SpinnerFramesBlock)
