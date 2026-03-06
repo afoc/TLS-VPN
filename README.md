@@ -43,7 +43,7 @@
 ### 网络能力
 
 - **L3 TUN 隧道**：基于用户态 TUN 设备实现三层 IP 转发
-- **跨平台 TUN**：Linux 使用 `/dev/net/tun` + `ioctl`，Windows 使用 Wintun 驱动（ring buffer）
+- **跨平台 TUN**：Linux 通过 `github.com/songgao/water` 库创建 TUN 设备（底层封装了 `/dev/net/tun`），Windows 通过 `golang.zx2c4.com/wireguard` 使用 Wintun 驱动；地址与路由均通过 `ip` 命令配置
 - **路由模式**：`split`（分流，仅指定网段走 VPN）、`full`（全流量，重定向默认网关）
 - **DNS 推送与接管**：服务端推送 DNS 配置，支持可选 DNS 劫持（`redirect_dns`）
 - **Linux NAT**：服务端自动配置 iptables MASQUERADE + FORWARD 规则，可开关
@@ -519,7 +519,7 @@ tls-vpn/
 │   │   ├── vpn_server.go            mTLS 服务端、IP 池分配、TUN 转发、会话管理
 │   │   ├── vpn_client.go            mTLS 客户端、握手状态机、路由设置、心跳重连
 │   │   ├── tun_interface.go         TUN 设备跨平台抽象接口
-│   │   ├── tun_device_unix.go       Linux/macOS TUN 实现（/dev/net/tun + ioctl）
+│   │   ├── tun_device_unix.go       Linux/macOS TUN 实现（songgao/water 库封装）
 │   │   └── tun_device_windows.go    Windows TUN 实现（Wintun + ring buffer）
 │   │
 │   ├── 网络配置

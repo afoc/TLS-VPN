@@ -63,7 +63,7 @@ VPN 数据通道（长连接）
 | `vpn_server.go` | mTLS listener + IP 池分配 + TUN 转发 + 会话管理 + 超时清理 |
 | `vpn_client.go` | mTLS dial + 握手状态机 + TUN 配置 + 路由设置 + 心跳 + 重连 |
 | `tun_interface.go` | TUN 跨平台抽象接口（`ReadPacket`/`WritePacket`/`Close`/`Name`） |
-| `tun_device_unix.go` | Linux/macOS TUN 实现（`/dev/net/tun` + `ioctl(TUNSETIFF)` + ip 命令） |
+| `tun_device_unix.go` | Linux/macOS TUN 实现（`github.com/songgao/water` 库封装，底层调用 `/dev/net/tun`；地址与路由通过 `ip` 命令配置） |
 | `tun_device_windows.go` | Windows TUN 实现（Wintun 驱动 + ring buffer） |
 
 #### 网络配置
@@ -969,17 +969,19 @@ Unix 下 TUN 设备的创建与配置分两个阶段：
 
 ```go
 func createTUNDevice(name string, network string) (TUNDevice, error) {
-    // 1. 打开 /dev/net/tun
-    fd, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
-    // 2. 通过 ioctl(TUNSETIFF) 注册设备名与 IFF_TUN 标志
-    ifr := ... // struct ifreq: 设备名 + IFF_TUN | IFF_NO_PI
-    syscall.Syscall(syscall.SYS_IOCTL, fd.Fd(), syscall.TUNSETIFF, ...)
-    // 3. 返回封装了 fd 的 TUNDevice 实现
+    // 使用 github.com/songgao/water 库创建 TUN 设备
+    // water 库内部封装了 /dev/net/tun 的打开与 ioctl(TUNSETIFF) 注册，
+    // 项目代码无需直接操作系统调用
+    config := water.Config{
+        DeviceType: water.TUN,
+    }
+    if name != "" {
+        config.Name = name
+    }
+    iface, err := water.New(config)
+    // 返回封装了 water.Interface 的 TUNDevice 实现
 }
 ```
-
-- `IFF_TUN`：三层模式（收发 IP 包，无以太网帧头）
-- `IFF_NO_PI`：不在包前附加 4 字节 protocol info，读到的就是原始 IP 包
 
 **阶段 2：配置地址与 MTU**
 
@@ -1470,7 +1472,7 @@ TUI → ControlClient.StartServer()
                     ├── server.InitializeTUN()
                     │       ├── checkRootPrivileges()
                     │       ├── createTUNDevice("tun", config.Network)
-                    │       │       /dev/net/tun + ioctl(TUNSETIFF, IFF_TUN|IFF_NO_PI)
+                    │       │       water.New(water.Config{DeviceType: water.TUN, Name: "tun"})
                     │       ├── serverIP = base(.1)
                     │       ├── configureTUNDevice(tun.Name(), serverIP+"/24", MTU)
                     │       └── enableIPForwarding()   /proc/sys/net/ipv4/ip_forward = 1
