@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -56,8 +58,11 @@ func (api *CertAPIServer) Start() error {
 	mux.HandleFunc("/api/health", api.handleHealth)
 
 	api.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", api.port),
-		Handler: mux,
+		Addr:         fmt.Sprintf(":%d", api.port),
+		Handler:      http.MaxBytesHandler(mux, 1<<20), // 限制请求体最大 1MB
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	log.Printf("[API] 证书API服务器启动: http://0.0.0.0:%d", api.port)
@@ -69,11 +74,13 @@ func (api *CertAPIServer) Start() error {
 	return api.server.ListenAndServe()
 }
 
-// Stop 停止API服务器
+// Stop 优雅停止API服务器
 func (api *CertAPIServer) Stop() error {
 	if api.server != nil {
 		log.Printf("[API] 证书API服务器正在停止...")
-		err := api.server.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := api.server.Shutdown(ctx)
 		if err == nil {
 			log.Printf("[API] 证书API服务器已停止")
 		}
@@ -99,10 +106,10 @@ func (api *CertAPIServer) handleCertRequest(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 获取客户端IP
-	clientIP := r.RemoteAddr
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		clientIP = forwarded
+	// 只取直连的真实 RemoteAddr，不信任 X-Forwarded-For（可被伪造）
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		clientIP = r.RemoteAddr
 	}
 
 	// 解析请求
@@ -114,15 +121,15 @@ func (api *CertAPIServer) handleCertRequest(w http.ResponseWriter, r *http.Reque
 
 	log.Printf("[API] 收到证书请求 - Token: %s, 来自: %s", req.TokenID, clientIP)
 
-	// 验证并使用Token
-	token, err := api.tokenManager.ValidateAndUseToken(req.TokenID, clientIP)
+	// 先查找并验证 Token（不标记使用），确认 Token 有效后再签发证书
+	token, err := api.tokenManager.GetToken(req.TokenID)
 	if err != nil {
-		log.Printf("[API] Token验证失败: %v", err)
-		api.sendError(w, "Token验证失败: "+err.Error(), http.StatusUnauthorized)
+		log.Printf("[API] Token不存在: %s", req.TokenID)
+		api.sendError(w, "Token验证失败: Token不存在", http.StatusUnauthorized)
 		return
 	}
 
-	// 使用Token密钥解密CSR
+	// 使用Token密钥解密CSR（在消耗Token之前验证数据完整性）
 	csrPEM, err := DecryptWithToken(req.EncryptedCSR, req.Nonce, token.Key)
 	if err != nil {
 		log.Printf("[API] 解密CSR失败: %v", err)
@@ -150,6 +157,14 @@ func (api *CertAPIServer) handleCertRequest(w http.ResponseWriter, r *http.Reque
 	}
 
 	log.Printf("[API] CSR验证通过 - CN: %s, 算法: %s", csr.Subject.CommonName, csr.SignatureAlgorithm)
+
+	// CSR 验证完全通过后，再正式消耗 Token（避免 Token 被恶意请求提前消耗）
+	token, err = api.tokenManager.ValidateAndUseToken(req.TokenID, clientIP)
+	if err != nil {
+		log.Printf("[API] Token验证失败: %v", err)
+		api.sendError(w, "Token验证失败: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
 
 	// 签发证书
 	certPEM, err := api.signCertificate(csr)
@@ -238,4 +253,3 @@ func (api *CertAPIServer) signCertificate(csr *x509.CertificateRequest) ([]byte,
 
 	return certPEM, nil
 }
-

@@ -931,36 +931,29 @@ func (t *TUIApp) RequestExit() {
 
 // showExitDialog 显示退出确认对话框（仅当有 VPN 运行时）
 func (t *TUIApp) showExitDialog() {
-	modal := tview.NewModal().
-		SetText(fmt.Sprintf("%s⚡%s VPN 服务正在运行\n\n退出后服务将继续在后台运行", tag(ColorAccent), colorResetTag)).
-		AddButtons([]string{"退出界面", "停止服务", "取消"}).
-		SetBackgroundColor(ColorBgPanel).
-		SetTextColor(ColorTextBright).
-		SetButtonBackgroundColor(ColorAccent).
-		SetButtonTextColor(ColorBgDeep).
-		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			t.hideModalPage("exitDialog")
-			t.app.SetFocus(t.menuList)
-
-			switch buttonIndex {
-			case 0: // 退出管理界面（服务继续后台运行）
-				t.addLog("退出管理界面，服务继续后台运行")
+	t.showThreeChoiceDialog("exit-confirm",
+		"VPN 服务正在运行\n\n"+
+			"[#00FFFF]退出界面[-] - 服务继续在后台运行\n"+
+			"[#FF00FF]停止服务[-] - 断开所有连接并退出\n"+
+			"[#FFE900]取消[-] - 返回管理界面",
+		"退出界面",
+		"停止服务",
+		"取消",
+		func(choice int) {
+			switch choice {
+			case 0: // 退出界面（服务继续后台运行）
+				t.addLog("[yellow]退出管理界面，服务继续后台运行")
 				t.Stop()
 			case 1: // 停止后台服务
 				t.addLog("正在停止后台服务...")
 				if _, err := t.client.Shutdown(); err != nil {
-					t.addLog("停止失败: %v", err)
+					t.addLog("[red]停止失败: %v", err)
 				} else {
-					t.addLog("后台服务已停止")
+					t.addLog("[green]后台服务已停止")
 				}
 				t.Stop()
-			case 2: // 取消
+			case 2, -1: // 取消或 Esc
 				t.addLog("取消退出")
 			}
 		})
-
-	modal.SetTitle(t.formatPanelTitle("⚠", "退出确认"))
-	modal.SetBorder(true)
-	t.showModalPage("exitDialog", modal)
-	t.app.SetFocus(modal)
 }

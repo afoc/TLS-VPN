@@ -22,6 +22,9 @@ const DefaultPIDFile = "/var/run/tlsvpn.pid"
 // DefaultTokenDir 默认Token目录
 const DefaultTokenDir = "./tokens"
 
+// DefaultCertAPIPort 证书申请 API 默认端口
+const DefaultCertAPIPort = 8081
+
 // ConfigFile JSON配置文件结构（用于序列化和反序列化）
 type ConfigFile struct {
 	ServerAddress             string   `json:"server_address"`
@@ -45,6 +48,8 @@ type ConfigFile struct {
 	RedirectDNS               bool     `json:"redirect_dns"`
 	EnableNAT                 bool     `json:"enable_nat"`
 	NATInterface              string   `json:"nat_interface"`
+	MaxRetries                int      `json:"max_retries"`
+	HeartbeatIntervalSec      int      `json:"heartbeat_interval_sec"`
 }
 
 // ToVPNConfig 将ConfigFile转换为VPNConfig
@@ -71,6 +76,8 @@ func (cf *ConfigFile) ToVPNConfig() VPNConfig {
 		RedirectDNS:            cf.RedirectDNS,
 		EnableNAT:              cf.EnableNAT,
 		NATInterface:           cf.NATInterface,
+		MaxRetries:             cf.MaxRetries,
+		HeartbeatInterval:      time.Duration(cf.HeartbeatIntervalSec) * time.Second,
 	}
 }
 
@@ -97,6 +104,8 @@ type VPNConfig struct {
 	RedirectDNS            bool          // 新增：是否劫持DNS
 	EnableNAT              bool          // 新增：服务器端是否启用NAT
 	NATInterface           string        // 新增：NAT出口网卡（空字符串=自动检测）
+	MaxRetries             int           // 新增：最大重连次数（0=无限）
+	HeartbeatInterval      time.Duration // 新增：心跳间隔
 }
 
 // DefaultConfig 默认配置
@@ -122,6 +131,8 @@ var DefaultConfig = VPNConfig{
 	RedirectDNS:            false,
 	EnableNAT:              true,
 	NATInterface:           "",
+	MaxRetries:             5,
+	HeartbeatInterval:      30 * time.Second,
 }
 
 // ValidateConfig 验证配置
@@ -239,6 +250,8 @@ func SaveConfigToFile(filename string, config VPNConfig) error {
 		RedirectDNS:               config.RedirectDNS,
 		EnableNAT:                 config.EnableNAT,
 		NATInterface:              config.NATInterface,
+		MaxRetries:                config.MaxRetries,
+		HeartbeatIntervalSec:      int(config.HeartbeatInterval / time.Second),
 	}
 
 	data, err := json.MarshalIndent(configFile, "", "  ")
@@ -246,7 +259,7 @@ func SaveConfigToFile(filename string, config VPNConfig) error {
 		return fmt.Errorf("序列化配置失败: %v", err)
 	}
 
-	return os.WriteFile(filename, data, 0644)
+	return os.WriteFile(filename, data, 0600)
 }
 
 // autoSaveConfig 已废弃，配置保存通过 VPNService.SaveConfig() 处理

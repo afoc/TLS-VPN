@@ -1,8 +1,7 @@
 # TLS-VPN
 
-[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.24.0-00ADD8?style=flat&logo=go)](https://golang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)](#系统要求)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](#)
 
 基于 **TLS 1.3 + TUN（L3）隧道** 的跨平台自建 VPN 系统，使用 Go 开发。集成自建 PKI、Token 注册体系、交互式 TUI 管理界面与后台守护进程，无需依赖 OpenVPN 或 WireGuard 守护进程。
 
@@ -126,21 +125,21 @@ cd tls-vpn/source
 
 # 编译（Linux）
 go mod download
-go build -o ../bin/tls-vpn .
+go build -o ../build/tls-vpn .
 
 # 编译（Windows PowerShell）
 go mod download
-go build -o ..\bin\tls-vpn.exe .
+go build -o ..\build\tls-vpn.exe .
 ```
 
 ### 二、启动程序
 
 ```bash
 # Linux（需要 root）
-sudo ./bin/tls-vpn
+sudo ./build/tls-vpn
 
 # Windows（管理员 PowerShell）
-.\bin\tls-vpn.exe
+.\build\tls-vpn.exe
 ```
 
 程序启动后自动进入交互式 TUI 界面，可通过**快速向导**完成服务端部署或客户端接入。
@@ -157,12 +156,12 @@ sudo ./bin/tls-vpn
 # Linux / macOS
 cd source
 go mod download
-go build -o ../bin/tls-vpn .
+go build -o ../build/tls-vpn .
 
 # Windows PowerShell
 Set-Location .\source
 go mod download
-go build -o ..\bin\tls-vpn.exe .
+go build -o ..\build\tls-vpn.exe .
 ```
 
 ### 交叉编译
@@ -170,12 +169,12 @@ go build -o ..\bin\tls-vpn.exe .
 ```bash
 # Linux 编译 Windows 可执行文件
 cd source
-GOOS=windows GOARCH=amd64 go build -o ../bin/tls-vpn.exe .
+GOOS=windows GOARCH=amd64 go build -o ../build/tls-vpn.exe .
 
 # Windows 编译 Linux 可执行文件（PowerShell）
 Set-Location .\source
 $env:GOOS="linux"; $env:GOARCH="amd64"
-go build -o ..\bin\tls-vpn .
+go build -o ..\build\tls-vpn .
 ```
 
 ---
@@ -193,7 +192,7 @@ go build -o ..\bin\tls-vpn .
 
 ### 智能启动（默认，推荐）
 
-执行 `./tls-vpn` 时：
+执行 `./build/tls-vpn` 时：
 
 1. 检测后台 Daemon 是否已运行
 2. 若未运行，自动 fork 一个 `--service` 子进程（Linux 使用 `Setsid` 脱离终端，Windows 使用 `CREATE_NEW_PROCESS_GROUP`）
@@ -212,10 +211,10 @@ go build -o ..\bin\tls-vpn .
 
 ```bash
 # 查看状态（服务是否运行、端口、连接数、TUN、流量、当前配置）
-./tls-vpn --status
+./build/tls-vpn --status
 
 # 优雅停止（通过 IPC 下发 shutdown，等待资源清理后退出）
-./tls-vpn --stop
+./build/tls-vpn --stop
 ```
 
 ---
@@ -226,7 +225,7 @@ go build -o ..\bin\tls-vpn .
 
 ```
 1. 启动程序
-   sudo ./tls-vpn
+   sudo ./build/tls-vpn
 
 2. 进入 TUI → 快速向导 → 服务端快速部署
    - 设置监听端口（默认 8080）
@@ -251,8 +250,8 @@ go build -o ..\bin\tls-vpn .
 
 ```
 1. 启动程序
-   sudo ./tls-vpn  （Linux）
-   .\tls-vpn.exe   （Windows 管理员）
+   sudo ./build/tls-vpn  （Linux）
+   .\build\tls-vpn.exe   （Windows 管理员）
 
 2. 进入 TUI → 快速向导 → 客户端快速配置
    - 填写服务端地址和端口
@@ -275,7 +274,7 @@ go build -o ..\bin\tls-vpn .
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `server_address` | string | `localhost` | 客户端连接的服务端地址 |
+| `server_address` | string | `""` | 客户端连接的服务端地址（服务端模式下无需设置） |
 | `server_port` | int | `8080` | VPN 数据通道 TLS 监听端口 |
 | `cert_api_port` | int | `8081` | 证书申请 HTTP API 端口 |
 | `network` | string | `10.8.0.0/24` | VPN 虚拟网段（CIDR） |
@@ -296,6 +295,8 @@ go build -o ..\bin\tls-vpn .
 | `max_connections` | int | `100` | 服务端最大并发连接数 |
 | `session_timeout_sec` | int | `300` | 服务端会话超时（秒） |
 | `session_cleanup_interval_sec` | int | `30` | 服务端会话清理周期（秒） |
+| `max_retries` | int | `10` | 客户端最大重连次数 |
+| `heartbeat_interval_sec` | int | `30` | 心跳发送间隔（秒） |
 
 ### 服务端参考配置
 
@@ -558,7 +559,7 @@ tls-vpn/
 │       ├── tui_dialogs.go           输入框、确认框、错误弹窗
 │       └── tui_theme.go             配色与组件样式
 │
-└── bin/                             编译产出目录（不纳入版本控制）
+└── build/                           编译产出目录
     ├── tls-vpn                      Linux 可执行文件
     └── tls-vpn.exe                  Windows 可执行文件
 ```
@@ -597,16 +598,16 @@ tls-vpn/
 
 ```bash
 # 前台启动（自动拉起后台 + TUI）
-sudo ./tls-vpn
+sudo ./build/tls-vpn
 
 # 仅启动后台服务
-sudo ./tls-vpn --service
+sudo ./build/tls-vpn --service
 
 # 查看服务状态
-./tls-vpn --status
+./build/tls-vpn --status
 
 # 停止服务
-./tls-vpn --stop
+./build/tls-vpn --stop
 
 # 实时查看日志
 tail -f /var/log/tls-vpn.log
@@ -616,16 +617,16 @@ tail -f /var/log/tls-vpn.log
 
 ```powershell
 # 前台启动
-.\tls-vpn.exe
+.\build\tls-vpn.exe
 
 # 仅启动后台服务
-.\tls-vpn.exe --service
+.\build\tls-vpn.exe --service
 
 # 查看状态
-.\tls-vpn.exe --status
+.\build\tls-vpn.exe --status
 
 # 停止服务
-.\tls-vpn.exe --stop
+.\build\tls-vpn.exe --stop
 ```
 
 ### `--status` 输出内容
@@ -653,7 +654,7 @@ tail -f /var/log/tls-vpn.log
 | 可能原因 | 排查方式 |
 |---------|---------|
 | 地址或端口错误 | 检查 `server_address` 和 `server_port` 配置 |
-| 服务端未启动 | 执行 `./tls-vpn --status` 确认服务端状态 |
+| 服务端未启动 | 执行 `./build/tls-vpn --status` 确认服务端状态 |
 | 防火墙未放行 | 确认 8080/tcp 已在服务端开放 |
 | 客户端缺少证书 | 确认 `./certs/` 下存在 `ca.pem`、`client.pem`、`client-key.pem` |
 | 证书已过期 | 证书有效期 1 年，到期后重新执行 Bootstrap |

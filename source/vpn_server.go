@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	mathrand "math/rand"
 	"net"
 	"sort"
 	"sync"
@@ -151,10 +152,19 @@ func (s *VPNServer) InitializeTUN() error {
 	s.tunDevice = tun
 	log.Printf("服务器使用TUN设备: %s", tun.Name())
 
-	// 配置TUN设备 - 服务器使用10.8.0.1/24
+	// 配置TUN设备 - 服务器使用网段的第一个IP（如 10.8.0.1）
 	serverIP := net.IPv4(s.serverIP[0], s.serverIP[1], s.serverIP[2], 1)
 	s.serverIP = serverIP
-	ipAddr := fmt.Sprintf("%s/24", serverIP.String())
+
+	// 从配置中获取实际的子网掩码
+	_, ipNet, err := net.ParseCIDR(s.config.Network)
+	if err != nil {
+		tun.Close()
+		cleanupTUNDevice(tun.Name())
+		return fmt.Errorf("解析网络配置失败: %v", err)
+	}
+	maskSize, _ := ipNet.Mask.Size()
+	ipAddr := fmt.Sprintf("%s/%d", serverIP.String(), maskSize)
 
 	if err := configureTUNDevice(tun.Name(), ipAddr, s.config.MTU); err != nil {
 		tun.Close()
@@ -274,11 +284,13 @@ func (s *VPNServer) handleConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// 生成唯一的SessionID (使用纳秒时间戳 + 随机数)
+	// 生成唯一的SessionID (使用纳秒时间戳 + 加密随机数)
+	var randNum uint32
+	binary.Read(rand.Reader, binary.BigEndian, &randNum)
 	sessionID := fmt.Sprintf("%s-%d-%d",
 		conn.RemoteAddr().String(),
 		time.Now().UnixNano(),
-		mathrand.Int31())
+		randNum)
 	session := &VPNSession{
 		ID:            sessionID,
 		RemoteAddr:    conn.RemoteAddr(),
@@ -344,13 +356,13 @@ sessionLoop:
 		default:
 		}
 
-		session.TLSConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		session.TLSConn.SetReadDeadline(time.Now().Add(s.config.HeartbeatInterval))
 
 		msg, err := ReadMessage(session.reader)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				// 检查是否超时
-				if time.Since(session.GetActivity()) > 90*time.Second {
+				if time.Since(session.GetActivity()) > s.config.KeepAliveTimeout {
 					log.Printf("会话超时: %s", session.ID)
 					break
 				}
@@ -429,9 +441,13 @@ func (s *VPNServer) sendDataResponse(session *VPNSession, payload []byte) error 
 
 // pushConfigToClient 推送配置给客户端
 func (s *VPNServer) pushConfigToClient(session *VPNSession) error {
+	// 从配置中获取实际的子网掩码
+	_, ipNet, _ := net.ParseCIDR(s.config.Network)
+	maskSize, _ := ipNet.Mask.Size()
+
 	// 准备客户端配置
 	config := ClientConfig{
-		AssignedIP:      session.IP.String() + "/24",
+		AssignedIP:      fmt.Sprintf("%s/%d", session.IP.String(), maskSize),
 		ServerIP:        s.config.ServerIP,
 		DNS:             s.config.DNSServers,
 		Routes:          s.config.PushRoutes,

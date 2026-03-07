@@ -25,11 +25,13 @@ func (s *VPNServer) SetupNAT(vpnNetwork string, outInterface string) error {
 	}
 
 	// 记录规则以便后续清理
+	s.sessionMutex.Lock()
 	s.natRules = append(s.natRules, NATRule{
 		Table: "nat",
 		Chain: "POSTROUTING",
 		Args:  args,
 	})
+	s.sessionMutex.Unlock()
 
 	log.Printf("已配置NAT: %s -> %s", vpnNetwork, outInterface)
 	return nil
@@ -80,11 +82,13 @@ func setupServerNAT(server *VPNServer, config VPNConfig) error {
 	} else {
 		log.Printf("已添加FORWARD规则: %s -> %s", tunDeviceName, natIface)
 		// 记录规则以便清理
+		server.sessionMutex.Lock()
 		server.natRules = append(server.natRules, NATRule{
 			Table: "filter",
 			Chain: "FORWARD",
 			Args:  []string{"-i", tunDeviceName, "-o", natIface, "-j", "ACCEPT"},
 		})
+		server.sessionMutex.Unlock()
 	}
 
 	// 允许 natIface -> tun 的已建立连接
@@ -95,11 +99,13 @@ func setupServerNAT(server *VPNServer, config VPNConfig) error {
 	} else {
 		log.Printf("已添加FORWARD规则: %s -> %s (RELATED,ESTABLISHED)", natIface, tunDeviceName)
 		// 记录规则以便清理
+		server.sessionMutex.Lock()
 		server.natRules = append(server.natRules, NATRule{
 			Table: "filter",
 			Chain: "FORWARD",
 			Args:  []string{"-i", natIface, "-o", tunDeviceName, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
 		})
+		server.sessionMutex.Unlock()
 	}
 
 	return nil

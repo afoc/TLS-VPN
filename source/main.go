@@ -59,7 +59,7 @@ func printHelp() {
 	fmt.Println("  4. 再次运行 ./tls-vpn 可重新进入管理界面")
 	fmt.Println()
 	fmt.Printf("日志文件: %s\n", DefaultLogPath)
-	fmt.Println("控制套接字: /var/run/vpn_control.sock")
+	fmt.Printf("控制套接字: %s\n", ControlSocketPath)
 }
 
 // runSmart 智能启动：自动确保 daemon 运行，然后启动 TUI

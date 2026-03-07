@@ -128,18 +128,34 @@ func configureTUNDevice(ifaceName string, ipAddr string, mtu int) error {
 	// 使用 netsh 命令配置 IP 地址
 	log.Printf("配置TUN设备 %s: IP=%s, 掩码=%s", ifaceName, ip, mask)
 
-	// 先尝试删除旧的 IP 配置
+	// 先尝试删除旧的 IP 配置（静默处理）
 	_ = runCmdSilent("netsh", "interface", "ip", "delete", "address", ifaceName, ip)
 
 	// 设置 IP 地址
 	output, err := runCmdCombined("netsh", "interface", "ip", "set", "address",
 		ifaceName, "static", ip, mask)
 	if err != nil {
-		// 尝试添加地址而不是设置
-		output, err = runCmdCombined("netsh", "interface", "ip", "add", "address",
-			ifaceName, ip, mask)
-		if err != nil {
-			return fmt.Errorf("设置IP地址失败: %v, 输出: %s", err, string(output))
+		outputStr := string(output)
+		// 检查是否是因为对象已存在
+		if strings.Contains(outputStr, "对象已存在") ||
+			strings.Contains(outputStr, "The object already exists") ||
+			strings.Contains(outputStr, "already exists") {
+			log.Printf("IP地址 %s 已配置在接口 %s 上，跳过设置", ip, ifaceName)
+		} else {
+			// 尝试添加地址而不是设置
+			output, err = runCmdCombined("netsh", "interface", "ip", "add", "address",
+				ifaceName, ip, mask)
+			if err != nil {
+				outputStr = string(output)
+				// 再次检查是否是对象已存在
+				if strings.Contains(outputStr, "对象已存在") ||
+					strings.Contains(outputStr, "The object already exists") ||
+					strings.Contains(outputStr, "already exists") {
+					log.Printf("IP地址 %s 已配置在接口 %s 上，跳过设置", ip, ifaceName)
+				} else {
+					return fmt.Errorf("设置IP地址失败: %v, 输出: %s", err, outputStr)
+				}
+			}
 		}
 	}
 
@@ -167,7 +183,39 @@ func configureTUNDevice(ifaceName string, ipAddr string, mtu int) error {
 // cleanupTUNDevice 清理TUN设备（Windows版本）
 func cleanupTUNDevice(ifaceName string) {
 	log.Printf("清理TUN设备: %s", ifaceName)
-	// Wintun设备会在Close()时自动清理
+
+	// 清理接口上的所有IP地址配置
+	// 使用 netsh interface ip delete address 命令
+	output, err := runCmdCombined("netsh", "interface", "ip", "show", "addresses", ifaceName)
+	if err != nil {
+		// 接口可能已经不存在了，这是正常的
+		return
+	}
+
+	// 解析输出，找到所有配置的IP地址
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// 查找IP地址行（格式：IP 地址: x.x.x.x 或 IP Address: x.x.x.x）
+		if strings.Contains(line, "IP") && strings.Contains(line, ":") {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 2 {
+				ip := strings.TrimSpace(parts[len(parts)-1])
+				// 验证是否是有效的IPv4地址
+				if isIPv4(ip) {
+					// 删除这个IP地址
+					_, err := runCmdCombined("netsh", "interface", "ip", "delete", "address", ifaceName, ip)
+					if err != nil {
+						// 静默处理，因为接口可能正在被删除
+					} else {
+						log.Printf("已清理接口 %s 上的IP地址: %s", ifaceName, ip)
+					}
+				}
+			}
+		}
+	}
+
+	// Wintun设备会在Close()时自动删除接口本身
 }
 
 // enableIPForwarding 启用IP转发（Windows版本）

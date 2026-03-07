@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -326,14 +328,15 @@ func (s *VPNService) GenerateCSR(clientName string) (*GenerateCSRResponse, error
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 	privateKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
 
-	keyFile := fmt.Sprintf("%s-key.pem", clientName)
-	csrFile := fmt.Sprintf("%s.csr", clientName)
+	keyFile := fmt.Sprintf("%s/%s-key.pem", s.certDir, clientName) //key文件放在证书目录
+	csrFile := fmt.Sprintf("%s.csr", clientName)                   //csr文件放在当前目录
+	if err := os.WriteFile(csrFile, csrPEM, 0644); err != nil {
+		return nil, fmt.Errorf("保存CSR失败: %v", err)
+	}
+	os.MkdirAll(s.certDir, 0700)
 
 	if err := os.WriteFile(keyFile, privateKeyPEM, 0600); err != nil {
 		return nil, fmt.Errorf("保存私钥失败: %v", err)
-	}
-	if err := os.WriteFile(csrFile, csrPEM, 0644); err != nil {
-		return nil, fmt.Errorf("保存CSR失败: %v", err)
 	}
 
 	return &GenerateCSRResponse{
@@ -421,7 +424,9 @@ func (s *VPNService) RequestCert(req RequestCertRequest) error {
 	}
 
 	// 保存证书
-	os.MkdirAll(s.certDir, 0700)
+	if err := os.MkdirAll(s.certDir, 0700); err != nil {
+		return fmt.Errorf("创建证书目录失败: %v", err)
+	}
 
 	if len(caCertPEM) > 0 {
 		if err := os.WriteFile(s.certDir+"/ca.pem", caCertPEM, 0644); err != nil {
@@ -434,11 +439,15 @@ func (s *VPNService) RequestCert(req RequestCertRequest) error {
 	}
 
 	// 复制私钥
-	keyFile := strings.TrimSuffix(req.CSRFile, ".csr") + "-key.pem"
-	if keyPEM, err := os.ReadFile(keyFile); err == nil {
-		if err := os.WriteFile(s.certDir+"/client-key.pem", keyPEM, 0600); err != nil {
-			return fmt.Errorf("保存客户端私钥失败: %v", err)
-		}
+	baseName := filepath.Base(req.CSRFile)
+	clientName := strings.TrimSuffix(baseName, ".csr")
+	keyFile := fmt.Sprintf("%s/%s-key.pem", s.certDir, clientName)
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		return fmt.Errorf("读取客户端私钥失败: %v", err)
+	}
+	if err := os.WriteFile(s.certDir+"/client-key.pem", keyPEM, 0600); err != nil {
+		return fmt.Errorf("保存客户端私钥失败: %v", err)
 	}
 
 	return nil
@@ -764,17 +773,28 @@ func (s *VPNService) getOrInitCertManager(serverMode bool) (*CertificateManager,
 }
 
 func (s *VPNService) startCertAPIServer(certManager *CertificateManager) {
-	caCertPEM, _ := os.ReadFile(s.certDir + "/ca.pem")
-	block, _ := pem.Decode(caCertPEM)
-	if block == nil {
+	caCertPEM, err := os.ReadFile(s.certDir + "/ca.pem")
+	if err != nil {
+		log.Printf("警告: 启动证书API服务器失败，无法读取CA证书: %v", err)
 		return
 	}
-	caCert, _ := x509.ParseCertificate(block.Bytes)
-	caKey, _ := LoadCAKey(s.certDir)
-	if caCert != nil && caKey != nil {
-		s.apiServer = NewCertAPIServer(8081, certManager, caCert, caKey)
-		go s.apiServer.Start()
+	block, _ := pem.Decode(caCertPEM)
+	if block == nil {
+		log.Printf("警告: 启动证书API服务器失败，CA证书PEM格式无效")
+		return
 	}
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		log.Printf("警告: 启动证书API服务器失败，解析CA证书出错: %v", err)
+		return
+	}
+	caKey, err := LoadCAKey(s.certDir)
+	if err != nil {
+		log.Printf("警告: 启动证书API服务器失败，加载CA私钥出错: %v", err)
+		return
+	}
+	s.apiServer = NewCertAPIServer(DefaultCertAPIPort, certManager, caCert, caKey)
+	go s.apiServer.Start()
 }
 
 // Cleanup 清理资源

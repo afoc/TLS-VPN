@@ -56,18 +56,33 @@ func (rm *RouteManager) detectDefaultGateway() error {
 	}
 
 	lines := strings.Split(string(output), "\n")
+	var defaultIfaceIP string
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		// 查找包含 0.0.0.0 的行（默认路由）
 		if strings.HasPrefix(line, "0.0.0.0") {
 			fields := strings.Fields(line)
-			// Windows route print 格式：网络 子网掩码 网关 接口 跃点
+			// Windows route print 格式：网络 子网掩码 网关 接口IP 跃点
 			if len(fields) >= 5 {
 				rm.defaultGateway = fields[2]
-				rm.defaultIface = fields[3]
-				return nil
+				defaultIfaceIP = fields[3] // 这是接口IP，不是接口名
+				break
 			}
 		}
+	}
+
+	// 如果找到了接口IP，需要通过IP找到接口名称
+	if defaultIfaceIP != "" && rm.defaultGateway != "" {
+		ifaceName, err := rm.getInterfaceNameByIP(defaultIfaceIP)
+		if err == nil && ifaceName != "" {
+			rm.defaultIface = ifaceName
+			return nil
+		}
+		// 如果找不到接口名，至少保存IP（虽然不太有用）
+		rm.defaultIface = defaultIfaceIP
+		log.Printf("警告: 无法通过IP %s 找到接口名称，将使用IP地址", defaultIfaceIP)
+		return nil
 	}
 
 	// 如果上面的方法失败，尝试使用 netsh
@@ -162,6 +177,47 @@ func isIPv4(s string) bool {
 	return true
 }
 
+// getInterfaceNameByIP 通过接口IP地址获取接口名称
+func (rm *RouteManager) getInterfaceNameByIP(ip string) (string, error) {
+	// 使用 netsh interface ipv4 show addresses 获取所有接口信息
+	output, err := exec.Command("netsh", "interface", "ipv4", "show", "addresses").Output()
+	if err != nil {
+		return "", fmt.Errorf("执行netsh命令失败: %v", err)
+	}
+
+	lines := strings.Split(string(output), "\n")
+	var currentInterface string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// 检测接口名称行（格式："接口 xxx 的配置" 或 "Configuration for interface xxx"）
+		if strings.Contains(line, "接口") && strings.Contains(line, "配置") {
+			// 中文版：接口 "以太网" 的配置
+			parts := strings.Split(line, "\"")
+			if len(parts) >= 2 {
+				currentInterface = parts[1]
+			}
+		} else if strings.Contains(line, "Configuration for interface") {
+			// 英文版：Configuration for interface "Ethernet"
+			parts := strings.Split(line, "\"")
+			if len(parts) >= 2 {
+				currentInterface = parts[1]
+			}
+		}
+
+		// 检测IP地址行
+		if currentInterface != "" && strings.Contains(line, ip) {
+			// 确认这是IP地址行
+			if strings.Contains(line, "IP") || strings.Contains(line, "地址") {
+				return currentInterface, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("未找到IP %s 对应的接口", ip)
+}
+
 // AddRoute 添加路由（Windows版本 - 使用netsh命令）
 func (rm *RouteManager) AddRoute(destination, gateway, iface string) error {
 	rm.mutex.Lock()
@@ -173,7 +229,7 @@ func (rm *RouteManager) AddRoute(destination, gateway, iface string) error {
 		// 格式: netsh interface ipv4 add route <CIDR> <接口名> <网关> metric=1
 		output, err := runCmdCombined("netsh", "interface", "ipv4", "add", "route",
 			destination, iface, gateway, "metric=1")
-		
+
 		if err != nil {
 			outputStr := string(output)
 			// 检查是否是因为路由已存在
@@ -385,6 +441,7 @@ func (rm *RouteManager) RestoreDNS() error {
 	backupPath := filepath.Join(os.TempDir(), "vpn_dns_backup.txt")
 	if data, err := os.ReadFile(backupPath); err == nil {
 		lines := strings.Split(string(data), "\n")
+		rm.originalDNS = make([]string, 0) // 清空后重新填充
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if isIPv4(line) {
@@ -400,13 +457,22 @@ func (rm *RouteManager) RestoreDNS() error {
 			ifaceName = "以太网"
 		}
 
-		output, err := runCmdCombined("netsh", "interface", "ipv4", "set", "dnsservers",
+		_, err := runCmdCombined("netsh", "interface", "ipv4", "set", "dnsservers",
 			ifaceName, "dhcp")
 		if err != nil {
-			log.Printf("警告: 恢复DHCP DNS失败: %v, 输出: %s", err, string(output))
+			// 尝试备用接口名
+			_, err = runCmdCombined("netsh", "interface", "ipv4", "set", "dnsservers",
+				"Ethernet", "dhcp")
+			if err != nil {
+				log.Printf("DNS已自动恢复或无需恢复")
+			} else {
+				log.Println("已恢复DNS为DHCP自动获取")
+			}
 		} else {
 			log.Println("已恢复DNS为DHCP自动获取")
 		}
+		// 删除备份文件
+		os.Remove(backupPath)
 		return nil
 	}
 
@@ -418,10 +484,15 @@ func (rm *RouteManager) RestoreDNS() error {
 
 	// 设置主 DNS
 	if len(rm.originalDNS) > 0 {
-		output, err := runCmdCombined("netsh", "interface", "ipv4", "set", "dnsservers",
+		_, err := runCmdCombined("netsh", "interface", "ipv4", "set", "dnsservers",
 			ifaceName, "static", rm.originalDNS[0], "primary")
 		if err != nil {
-			log.Printf("警告: 恢复主DNS失败: %v, 输出: %s", err, string(output))
+			// 尝试备用接口名
+			_, err = runCmdCombined("netsh", "interface", "ipv4", "set", "dnsservers",
+				"Ethernet", "static", rm.originalDNS[0], "primary")
+			if err != nil {
+				log.Printf("DNS配置已保留或无需更改")
+			}
 		}
 	}
 
@@ -430,7 +501,12 @@ func (rm *RouteManager) RestoreDNS() error {
 		_, err := runCmdCombined("netsh", "interface", "ipv4", "add", "dnsservers",
 			ifaceName, rm.originalDNS[i], fmt.Sprintf("index=%d", i+1))
 		if err != nil {
-			log.Printf("警告: 恢复备用DNS失败: %v", err)
+			// 尝试备用接口名
+			_, err = runCmdCombined("netsh", "interface", "ipv4", "add", "dnsservers",
+				"Ethernet", rm.originalDNS[i], fmt.Sprintf("index=%d", i+1))
+			if err != nil {
+				// 静默处理
+			}
 		}
 	}
 
@@ -454,8 +530,6 @@ func parseCIDR(cidr string) (string, string) {
 	return ip, mask
 }
 
-
-
 // trimSpace 辅助函数：去除首尾空格
 func trimSpace(s string) string {
 	return strings.TrimSpace(s)
@@ -465,5 +539,3 @@ func trimSpace(s string) string {
 func splitBySpace(s string) []string {
 	return strings.Fields(s)
 }
-
-

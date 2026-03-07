@@ -86,7 +86,16 @@ func (tm *TokenManager) LoadTokensFromDir(tokenDir string) error {
 			log.Printf("警告：加载Token密钥失败 %s: %v", file.Name(), err)
 			continue
 		}
-		token.Key, _ = hex.DecodeString(keyHex)
+		keyBytes, err := hex.DecodeString(keyHex)
+		if err != nil {
+			log.Printf("警告：Token密钥格式无效 %s: %v", file.Name(), err)
+			continue
+		}
+		if len(keyBytes) != 32 {
+			log.Printf("警告：Token密钥长度不正确 %s: 期望32字节，实际%d字节", file.Name(), len(keyBytes))
+			continue
+		}
+		token.Key = keyBytes
 
 		tm.mutex.Lock()
 		tm.tokens[token.ID] = &token
@@ -163,14 +172,10 @@ func (tm *TokenManager) ValidateAndUseToken(tokenID, clientIP string) (*Token, e
 	defer tm.mutex.Unlock()
 
 	log.Printf("[TokenManager] 验证Token: %s (来自: %s)", tokenID, clientIP)
-	log.Printf("[TokenManager] 当前内存中Token数量: %d", len(tm.tokens))
 
 	token, exists := tm.tokens[tokenID]
 	if !exists {
-		log.Printf("[TokenManager] Token不存在，当前可用Token ID列表:")
-		for id := range tm.tokens {
-			log.Printf("[TokenManager]   - %s", id)
-		}
+		log.Printf("[TokenManager] Token不存在: %s (来自: %s)", tokenID, clientIP)
 		return nil, fmt.Errorf("Token不存在")
 	}
 

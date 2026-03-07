@@ -76,8 +76,15 @@ func (c *VPNClient) ConfigureTUN() error {
 		return fmt.Errorf("未分配IP地址")
 	}
 
+	// 从配置中获取实际的子网掩码
+	_, ipNet, err := net.ParseCIDR(c.config.Network)
+	if err != nil {
+		return fmt.Errorf("解析网络配置失败: %v", err)
+	}
+	maskSize, _ := ipNet.Mask.Size()
+
 	// 配置TUN设备IP地址
-	ipAddr := fmt.Sprintf("%s/24", c.assignedIP.String())
+	ipAddr := fmt.Sprintf("%s/%d", c.assignedIP.String(), maskSize)
 	if err := configureTUNDevice(c.tunDevice.Name(), ipAddr, c.config.MTU); err != nil {
 		return err
 	}
@@ -240,7 +247,7 @@ func (c *VPNClient) ReceiveData() (MessageType, []byte, error) {
 
 // Run 运行客户端（接受 context 控制生命周期）
 func (c *VPNClient) Run(ctx context.Context) {
-	maxRetries := 5 // 最大重连次数，0表示无限
+	maxRetries := c.config.MaxRetries // 0 表示无限重连
 
 	// 保存 cancel 函数供 Close() 使用
 	c.cancelMutex.Lock()
@@ -345,7 +352,11 @@ func (c *VPNClient) Run(ctx context.Context) {
 
 // startHeartbeat 开始心跳
 func (c *VPNClient) startHeartbeat(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	interval := c.config.HeartbeatInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -491,9 +502,16 @@ func (c *VPNClient) setupRoutes() error {
 	serverIP := c.config.ServerAddress
 
 	// 添加到VPN服务器的路由，确保不走VPN
-	serverRoute := serverIP + "/32"
-	if err := rm.AddRoute(serverRoute, rm.defaultGateway, rm.defaultIface); err != nil {
-		log.Printf("警告：添加到VPN服务器的路由失败: %v", err)
+	// 只有当服务器IP不是本地地址时才添加
+	if serverIP != "" && serverIP != "127.0.0.1" && serverIP != "localhost" {
+		serverRoute := serverIP + "/32"
+		// 确保默认网关和接口都有效
+		if rm.defaultGateway != "" && rm.defaultIface != "" {
+			if err := rm.AddRoute(serverRoute, rm.defaultGateway, rm.defaultIface); err != nil {
+				// 静默处理，因为这个路由不是必需的（服务器可能在同一网络）
+				log.Printf("跳过添加到VPN服务器的路由（可能不需要）: %s", serverIP)
+			}
+		}
 	}
 
 	// 根据路由模式设置路由
@@ -660,26 +678,40 @@ func (c *VPNClient) IsRunning() bool {
 func (c *VPNClient) applyServerConfig(config *ClientConfig) error {
 	log.Printf("收到服务器配置: DNS=%v, Routes=%v, MTU=%d", config.DNS, config.Routes, config.MTU)
 
-	// 记录DNS服务器（可以修改/etc/resolv.conf，但需谨慎）
+	// 记录DNS服务器
 	for _, dns := range config.DNS {
 		log.Printf("推荐DNS: %s", dns)
 	}
 
-	// 添加路由
+	if len(config.Routes) == 0 {
+		return nil
+	}
+
+	// 确保路由管理器已初始化
+	if c.routeManager == nil {
+		rm, err := NewRouteManager()
+		if err != nil {
+			return fmt.Errorf("创建路由管理器失败: %v", err)
+		}
+		c.routeManager = rm
+	}
+
+	// 解析服务器VPN IP（去掉CIDR后缀）作为路由网关
+	serverIPStr := config.ServerIP
+	for i := 0; i < len(serverIPStr); i++ {
+		if serverIPStr[i] == '/' {
+			serverIPStr = serverIPStr[:i]
+			break
+		}
+	}
+	if serverIPStr == "" {
+		serverIPStr = "10.8.0.1"
+	}
+
 	tunDeviceName := c.tunDevice.Name()
 	for _, route := range config.Routes {
-		// 解析服务器IP以获取网关（去掉CIDR后缀）
-		serverIPStr := config.ServerIP
-		for i := 0; i < len(serverIPStr); i++ {
-			if serverIPStr[i] == '/' {
-				serverIPStr = serverIPStr[:i]
-				break
-			}
-		}
-
-		output, err := runCmdCombined("ip", "route", "add", route, "via", serverIPStr, "dev", tunDeviceName)
-		if err != nil {
-			log.Printf("警告：添加路由 %s 失败: %v, 输出: %s", route, err, string(output))
+		if err := c.routeManager.AddRoute(route, serverIPStr, tunDeviceName); err != nil {
+			log.Printf("警告：添加路由 %s 失败: %v", route, err)
 		} else {
 			log.Printf("已添加路由: %s via %s dev %s", route, serverIPStr, tunDeviceName)
 		}
